@@ -16,6 +16,8 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QBrush>
+#include <QColor>
 
 #include <array>
 
@@ -227,6 +229,18 @@ int main(int argc, char* argv[]) {
     title->setAlignment(Qt::AlignCenter);
     leftV->addWidget(title);
 
+    // Ожидаемое число страховых случаев в месяц (по настройкам симуляции)
+    auto* expectedClaimsFrame = new QFrame;
+    expectedClaimsFrame->setStyleSheet(QStringLiteral(
+        "QFrame{border:1px solid #000000; background:#fafafa;}"));
+    auto* expectedClaimsLabel = new QLabel;
+    expectedClaimsLabel->setAlignment(Qt::AlignCenter);
+    auto* expectedClaimsLay = new QVBoxLayout;
+    expectedClaimsLay->setContentsMargins(8, 6, 8, 6);
+    expectedClaimsLay->addWidget(expectedClaimsLabel);
+    expectedClaimsFrame->setLayout(expectedClaimsLay);
+    leftV->addWidget(expectedClaimsFrame);
+
     auto* tiles = new QHBoxLayout;
     std::array<TypeUi, 3> ui{
         makeTypeTile(QStringLiteral("Жильё"), InsuranceType::Home),
@@ -284,6 +298,13 @@ int main(int argc, char* argv[]) {
         month->setText(QStringLiteral("%1/%2")
                            .arg(std::min(done + 1, totalMonths))
                            .arg(totalMonths));
+
+        const int minC = sim.config().minClaimsPerMonth;
+        const int maxC = sim.config().maxClaimsPerMonth;
+        const double expected = (static_cast<double>(minC) + static_cast<double>(maxC)) / 2.0;
+        expectedClaimsLabel->setText(
+            QStringLiteral("Ожидаемое число страховых случаев в месяц: %1")
+                .arg(QString::number(expected, 'f', 1)));
 
         const auto& off = sim.offers();
         for (int i = 0; i < 3; ++i) {
@@ -364,6 +385,25 @@ int main(int argc, char* argv[]) {
         set(2, QString::number(totalSold));
     };
 
+    auto highlightLastRow = [&](const QColor& bg) {
+        const int row = table->rowCount() - 1;
+        if (row < 0) return;
+        for (int col = 0; col < table->columnCount(); ++col) {
+            if (auto* it = table->item(row, col)) {
+                it->setBackground(QBrush(bg));
+                QFont f = it->font();
+                f.setBold(true);
+                it->setFont(f);
+            }
+        }
+        if (auto* vh = table->verticalHeaderItem(row)) {
+            vh->setBackground(QBrush(bg));
+            QFont f = vh->font();
+            f.setBold(true);
+            vh->setFont(f);
+        }
+    };
+
     QObject::connect(nextBtn, &QPushButton::clicked, [&]() {
         MonthResult r;
         const bool ok = sim.step(&r);
@@ -377,12 +417,14 @@ int main(int argc, char* argv[]) {
                     .arg(r.month)
                     .arg(money(r.capitalAfter))
                     .arg(money(loss)));
+            highlightLastRow(QColor(255, 235, 235)); // светло-красный
         } else if (sim.finished()) {
             const double gain = r.capitalAfter - startCapital;
             showCenteredMessageBox(&window, QMessageBox::Information, QStringLiteral("Победа"),
                                    QStringLiteral("Игра завершена.\nИтоговый капитал: %1\nПрирост капитала: %2")
                                        .arg(money(r.capitalAfter))
                                        .arg(money(gain)));
+            highlightLastRow(gain >= 0 ? QColor(235, 255, 235) : QColor(255, 235, 235));
         }
         refresh();
     });
@@ -400,13 +442,14 @@ int main(int argc, char* argv[]) {
             QStringLiteral("Игра досрочно остановлена.\nТекущий капитал: %1\nИзменение капитала: %2")
                 .arg(money(sim.capital()))
                 .arg(money(gain)));
+        highlightLastRow(gain >= 0 ? QColor(235, 255, 235) : QColor(255, 235, 235));
         refresh();
     });
 
     for (int ti = 0; ti < 3; ++ti) {
         QObject::connect(ui[ti].edit, &QPushButton::clicked, [&, ti]() {
             InsuranceType t = static_cast<InsuranceType>(ti);
-            Offer o = sim.offers()[size_t(ti)];
+            Offer o = sim.offers()[static_cast<size_t>(ti)];
             if (!editOffer(&window, &o)) return;
             sim.setOffer(t, o);
             refresh();

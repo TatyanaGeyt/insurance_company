@@ -5,9 +5,14 @@
 #include <vector>
 
 Simulation::Simulation(Config cfg) : cfg_(cfg) {
-    offers_[0] = Offer{InsuranceType::Home, 90.0, 12, 20000.0, 800.0, 6};
-    offers_[1] = Offer{InsuranceType::Car, 120.0, 12, 15000.0, 600.0, 6};
-    offers_[2] = Offer{InsuranceType::Health, 150.0, 12, 25000.0, 1000.0, 6};
+    offers_[0].setParams(90.0, 12, 20000.0, 800.0, 6);
+    offers_[0].type_ = InsuranceType::Home;
+
+    offers_[1].setParams(120.0, 12, 15000.0, 600.0, 6);
+    offers_[1].type_ = InsuranceType::Car;
+
+    offers_[2].setParams(150.0, 12, 25000.0, 1000.0, 6);
+    offers_[2].type_ = InsuranceType::Health;
     reset();
 }
 
@@ -17,11 +22,9 @@ void Simulation::setConfig(const Config& c) {
 }
 
 void Simulation::setOffer(InsuranceType t, const Offer& o) {
-    Offer x = o;
-    x.type = t;
     const size_t i = static_cast<size_t>(idx(t));
-    offers_[i] = x;
-    offerArchive_[i].push_back(x);
+    offers_[i] = o;
+    offerArchive_[i].push_back(o);
     offerArchiveContractsSold_[i].push_back(0);
 }
 
@@ -74,7 +77,7 @@ int Simulation::irand(int lo, int hi) {
 }
 
 double Simulation::computeDemand(const Offer& o) const {
-    const int i = idx(o.type);
+    const int i = idx(o.getType());
     (void)i;
     const int base = std::max(0, o.baseDemand);
     const double price = std::max(o.totalPrice(), 0.0);
@@ -160,8 +163,12 @@ bool Simulation::step(MonthResult* out) {
             double u = urand01();
             if (u <= 0.0) u = 1e-12;
             const double damage = o.maxCoverage * u;
-            const double pay = std::max(0.0, damage - o.deductible);
-            paid += std::min(pay, o.maxCoverage);
+            
+            // Проверка: страховая выплата начинается только если ущерб >= франшизы
+            if (damage >= o.deductible) {
+                const double pay = damage - o.deductible;
+                paid += std::min(pay, o.maxCoverage);
+            }
         }
 
         r.claimsPaid[i] = paid;

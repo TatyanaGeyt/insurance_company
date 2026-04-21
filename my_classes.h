@@ -16,18 +16,43 @@ inline const char* insuranceTypeName(InsuranceType t) {
     }
 }
 
-struct Offer {
-    InsuranceType type = InsuranceType::Home;
+class Offer {
+public:
     double premiumPerMonth = 90.0;   // у.е. / месяц
     int contractMonths = 12;         // длительность договора
     double maxCoverage = 20000.0;    // макс. возмещение
     double deductible = 500.0;       // франшиза
-    int offerValidMonths = 6;        // сколько месяцев действуют условия
+    int offerValidMonths = 6;        // (UI-совместимость; в логике может не использоваться)
     int baseDemand = 0;              // базовый спрос (параметр моделирования)
     double curDemand = 0.0;          // текущий спрос (пересчитывается каждый месяц)
 
     double totalPrice() const { return premiumPerMonth * contractMonths; }
-    double getMonthlyPremium() const { return premiumPerMonth; }
+    InsuranceType getType() const { return type_; }
+    void setParams(double newPremiumPerMonth,
+                   int newContractMonths,
+                   double newMaxCoverage,
+                   double newDeductible,
+                   int newOfferValidMonths) {
+        premiumPerMonth = newPremiumPerMonth;
+        contractMonths = newContractMonths;
+        maxCoverage = newMaxCoverage;
+        deductible = newDeductible;
+        offerValidMonths = newOfferValidMonths;
+    }
+
+private:
+    InsuranceType type_ = InsuranceType::Home;
+    friend class Simulation;
+};
+
+struct Contract {
+    Offer offerSnapshot{};
+    int startMonth = 0;
+    int endMonth = 0;
+    bool ensuredEvents = false; // страховой случай в текущем месяце (True/False)
+
+    bool isActive(int month) const { return month >= startMonth && month <= endMonth; }
+    InsuranceType type() const { return offerSnapshot.getType(); }
 };
 
 struct Config {
@@ -81,16 +106,6 @@ public:
     double computeDemand(const Offer& o) const;
 
 private:
-    struct Contract {
-        Offer offerSnapshot{};
-        int startMonth = 0;
-        int endMonth = 0;
-        bool ensuredEvents = false; // страховой случай в текущем месяце (True/False)
-
-        bool isActive(int month) const { return month >= startMonth && month <= endMonth; }
-        InsuranceType type() const { return offerSnapshot.type; }
-    };
-
     int idx(InsuranceType t) const { return static_cast<int>(t); }
 
     double urand01();
