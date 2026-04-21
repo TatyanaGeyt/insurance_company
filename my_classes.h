@@ -23,20 +23,17 @@ struct Offer {
     double maxCoverage = 20000.0;    // макс. возмещение
     double deductible = 500.0;       // франшиза
     int offerValidMonths = 6;        // сколько месяцев действуют условия
-    int baseDemand = 0;             // базовый спрос (параметр моделирования)
-    double curDemand = 0.0;         // текущий спрос (пересчитывается каждый месяц)
+    int baseDemand = 0;              // базовый спрос (параметр моделирования)
+    double curDemand = 0.0;          // текущий спрос (пересчитывается каждый месяц)
 
-    // Полная стоимость договора для клиента.
     double totalPrice() const { return premiumPerMonth * contractMonths; }
-
-    // Взнос за месяц (по заданию нужен как отдельный метод).
     double getMonthlyPremium() const { return premiumPerMonth; }
 };
 
 struct Config {
-    int M = 12;                      // ДОЛЖЕН ВВОДИТЬСЯ ПОЛЬЗОВАТЕЛЕМ В ОКНЕ "СТАРТ"
-    double initialCapital = 30000.0; // ДОЛЖЕН ВВОДИТЬСЯ ПОЛЬЗОВАТЕЛЕМ В ОКНЕ "СТАРТ"
-    double taxRate = 0.09;           // доля (0..1)
+    int M = 12;
+    double initialCapital = 30000.0;
+    double taxRate = 0.09;
 
     std::array<int, 3> baseDemand{50, 40, 45};
     int demandNoiseMax = 10;         // случайная добавка к спросу (0..max), см. условие
@@ -44,7 +41,7 @@ struct Config {
     int minClaimsPerMonth = 1;
     int maxClaimsPerMonth = 25;
 
-    unsigned seed = 0;              // 0 => случайно
+    unsigned seed = 0;
 };
 
 struct MonthResult {
@@ -72,26 +69,23 @@ public:
     const std::vector<Offer>& offerArchive(InsuranceType t) const;
     const std::vector<int>& offerArchiveContractsSold(InsuranceType t) const;
 
-    int currentMonth() const { return month_; }       // сколько месяцев уже завершено
+    int currentMonth() const { return month_; }
     double capital() const { return capital_; }
     bool bankrupt() const { return bankrupt_; }
     bool finished() const { return finished_; }
 
     void reset();
-    /** Досрочное завершение игры (без банкротства). Дальнейшие step() не выполняются. */
     void finishEarly();
 
     bool step(MonthResult* out); // один месяц: налог -> продажи -> выплаты
-
-    // Текущий спрос (без случайной поправки) — чем выгоднее (цена/покрытие меньше), тем больше.
     double computeDemand(const Offer& o) const;
 
 private:
     struct Contract {
         Offer offerSnapshot{};
-        int startMonth = 0; // 1..M
-        int endMonth = 0;   // 1..M (включительно)
-        bool ensuredEvents = false; // страховой случай в текущем месяце (0/1)
+        int startMonth = 0;
+        int endMonth = 0;
+        bool ensuredEvents = false; // страховой случай в текущем месяце (True/False)
 
         bool isActive(int month) const { return month >= startMonth && month <= endMonth; }
         InsuranceType type() const { return offerSnapshot.type; }
@@ -107,7 +101,6 @@ private:
     std::array<std::vector<Offer>, 3> offerArchive_{};
     std::array<std::vector<int>, 3> offerArchiveContractsSold_{};
     std::vector<Contract> contracts_{};
-    // offerValidMonths не участвует в логике симуляции по условию задачи.
 
     int month_ = 0;
     double capital_ = 0.0;

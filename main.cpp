@@ -41,10 +41,10 @@ struct TypeUi {
     QLabel* months = nullptr;
     QLabel* demand = nullptr;
     QLabel* maxCov = nullptr;
-    QPushButton* edit = nullptr; // редактировать условия
+    QPushButton* edit = nullptr;
 };
 
-static bool startGameDialog(QWidget* parent, int* monthsOut) {
+static bool startGameDialog(QWidget* parent, int* monthsOut, double* initialCapitalOut) {
     QDialog dlg(parent);
     dlg.setWindowTitle(QStringLiteral("Start game"));
 
@@ -53,6 +53,12 @@ static bool startGameDialog(QWidget* parent, int* monthsOut) {
     m->setRange(6, 24);
     m->setValue(*monthsOut);
     form->addRow(QStringLiteral("Количество месяцев (M)"), m);
+
+    auto* cap = new QDoubleSpinBox;
+    cap->setRange(0, 1e12);
+    cap->setDecimals(2);
+    if (initialCapitalOut) cap->setValue(*initialCapitalOut);
+    form->addRow(QStringLiteral("Начальный капитал компании"), cap);
 
     auto* startBtn = new QPushButton(QStringLiteral("Старт"));
     auto* cancelBtn = new QPushButton(QStringLiteral("Отмена"));
@@ -71,11 +77,12 @@ static bool startGameDialog(QWidget* parent, int* monthsOut) {
     QObject::connect(startBtn, &QPushButton::clicked, [&]() {
         m->interpretText();
         if (monthsOut) *monthsOut = m->value();
+        cap->interpretText();
+        if (initialCapitalOut) *initialCapitalOut = cap->value();
         dlg.accept();
     });
     QObject::connect(cancelBtn, &QPushButton::clicked, &dlg, &QDialog::reject);
 
-    // Центрируем относительно основного окна (как "Победа/Поражение")
     dlg.adjustSize();
     if (parent) {
         const QPoint center = parent->frameGeometry().center();
@@ -85,6 +92,8 @@ static bool startGameDialog(QWidget* parent, int* monthsOut) {
     if (dlg.exec() != QDialog::Accepted) return false;
     m->interpretText();
     if (monthsOut) *monthsOut = m->value();
+    cap->interpretText();
+    if (initialCapitalOut) *initialCapitalOut = cap->value();
     return true;
 }
 
@@ -184,6 +193,7 @@ int main(int argc, char* argv[]) {
     Config cfg;
     Simulation sim(cfg);
     bool gameStarted = false;
+    double startCapital = cfg.initialCapital;
 
     QWidget window;
     window.setWindowTitle(QStringLiteral("Страховая компания — модель"));
@@ -193,7 +203,6 @@ int main(int argc, char* argv[]) {
 
     auto* main = new QVBoxLayout;
 
-    // Top bar
     auto* top = new QHBoxLayout;
     auto* month = new QLabel;
     month->setAlignment(Qt::AlignCenter);
@@ -202,17 +211,15 @@ int main(int argc, char* argv[]) {
     auto* endEarlyBtn = new QPushButton(QStringLiteral("Досрочно завершить игру"));
     endEarlyBtn->setEnabled(false);
     auto* nextBtn = new QPushButton(QStringLiteral("Следующий месяц"));
-    nextBtn->setEnabled(false); // включим после "Старт"
+    nextBtn->setEnabled(false);
     top->addWidget(endEarlyBtn, 0, Qt::AlignLeft);
     top->addStretch();
     top->addWidget(month);
     top->addStretch();
     top->addWidget(nextBtn, 0, Qt::AlignRight);
 
-    // Center: left offers + right table (как на рисунке)
     auto* center = new QHBoxLayout;
 
-    // Left: 3 insurance panels
     auto* left = new QWidget;
     left->setFixedWidth(720);
     auto* leftV = new QVBoxLayout;
@@ -231,7 +238,6 @@ int main(int argc, char* argv[]) {
     tiles->addWidget(ui[2].tile);
     leftV->addLayout(tiles);
 
-    // Архив (ниже актуальных предложений)
     auto* archiveTitle = new QLabel(QStringLiteral("Архив"));
     archiveTitle->setAlignment(Qt::AlignCenter);
     archiveTitle->setStyleSheet(QStringLiteral("font-size:14px; font-weight:700;"));
@@ -261,9 +267,6 @@ int main(int argc, char* argv[]) {
     leftV->addStretch();
     left->setLayout(leftV);
 
-    // Right: table big
-    // Номер месяца показываем номерами строк (вертикальный заголовок),
-    // поэтому отдельная колонка "Номер месяца" не нужна.
     auto* table = new QTableWidget(0, 3);
     table->setHorizontalHeaderLabels(
         {QStringLiteral("Капитал"), QStringLiteral("Выплаты"), QStringLiteral("Всего договоров")});
@@ -290,10 +293,8 @@ int main(int argc, char* argv[]) {
             ui[i].demand->setText(QString::number(o.curDemand, 'f', 0));
             ui[i].maxCov->setText(QString::number(o.maxCoverage, 'f', 0));
         }
-
-        // Перерисовка архива: кнопка "страховкаN" + количество договоров
+        
         for (int ti = 0; ti < 3; ++ti) {
-            // очистим всё, кроме заголовка (первый виджет)
             auto* lay = archiveCols[ti];
             while (lay->count() > 1) {
                 QLayoutItem* it = lay->takeAt(1);
@@ -328,7 +329,6 @@ int main(int argc, char* argv[]) {
                 const Offer offer = arc[size_t(j)];
                 QObject::connect(btn, &QPushButton::clicked, [&window, &sim, offer]() {
                     Offer tmp = offer;
-                    // спрос для архива показываем как вычисленный по формуле (с текущим baseDemand)
                     tmp.curDemand = sim.computeDemand(tmp);
                     showCenteredMessageBox(
                         &window, QMessageBox::Information, QStringLiteral("Страховка (архив)"),
@@ -370,15 +370,19 @@ int main(int argc, char* argv[]) {
         appendRow(r);
 
         if (!ok && sim.bankrupt()) {
+            const double loss = startCapital - r.capitalAfter;
             showCenteredMessageBox(
                 &window, QMessageBox::Warning, QStringLiteral("Поражение"),
-                QStringLiteral("Разорение в месяце %1.\nИтоговый капитал: %2")
+                QStringLiteral("Разорение в месяце %1.\nИтоговый капитал: %2\nУбыток: %3")
                     .arg(r.month)
-                    .arg(money(r.capitalAfter)));
+                    .arg(money(r.capitalAfter))
+                    .arg(money(loss)));
         } else if (sim.finished()) {
+            const double gain = r.capitalAfter - startCapital;
             showCenteredMessageBox(&window, QMessageBox::Information, QStringLiteral("Победа"),
-                                   QStringLiteral("Игра завершена.\nИтоговый капитал: %1")
-                                       .arg(money(r.capitalAfter)));
+                                   QStringLiteral("Игра завершена.\nИтоговый капитал: %1\nПрирост капитала: %2")
+                                       .arg(money(r.capitalAfter))
+                                       .arg(money(gain)));
         }
         refresh();
     });
@@ -390,10 +394,12 @@ int main(int argc, char* argv[]) {
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (ans != QMessageBox::Yes) return;
         sim.finishEarly();
+        const double gain = sim.capital() - startCapital;
         showCenteredMessageBox(
             &window, QMessageBox::Information, QStringLiteral("Игра завершена"),
-            QStringLiteral("Игра досрочно остановлена.\nТекущий капитал: %1")
-                .arg(money(sim.capital())));
+            QStringLiteral("Игра досрочно остановлена.\nТекущий капитал: %1\nИзменение капитала: %2")
+                .arg(money(sim.capital()))
+                .arg(money(gain)));
         refresh();
     });
 
@@ -415,15 +421,16 @@ int main(int argc, char* argv[]) {
     window.resize(1200, 720);
     window.show();
 
-    // Поверх показанного основного окна — "Start game" по центру.
     int months = sim.config().M;
-    if (!startGameDialog(&window, &months)) return 0;
-    // Берём актуальный Config из симуляции и меняем только M — так не потеряются поля
+    double initialCap = sim.config().initialCapital;
+    if (!startGameDialog(&window, &months, &initialCap)) return 0;
     Config gameCfg = sim.config();
     gameCfg.M = months;
+    gameCfg.initialCapital = initialCap;
     sim.setConfig(gameCfg);
     cfg = gameCfg;
     gameStarted = true;
+    startCapital = gameCfg.initialCapital;
     table->setRowCount(0);
     refresh();
 

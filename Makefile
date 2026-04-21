@@ -2,8 +2,8 @@ APP := insurance_app
 CXX ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -pedantic
 
-# Если у тебя Qt5, запусти: make QT=Qt5Widgets
-QT ?= Qt6Widgets
+
+QT ?= Qt6Widgets # Если Qt5, запускать: make QT=Qt5Widgets
 QT_CFLAGS := $(shell pkg-config --cflags $(QT))
 QT_LIBS := $(shell pkg-config --libs $(QT))
 
