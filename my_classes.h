@@ -18,38 +18,50 @@ inline const char* insuranceTypeName(InsuranceType t) {
 
 class Offer {
 public:
-    double premiumPerMonth = 90.0;   // у.е. / месяц
-    int contractMonths = 12;         // длительность договора
-    double maxCoverage = 20000.0;    // макс. возмещение
-    double deductible = 500.0;       // франшиза
-    int offerValidMonths = 6;        // (UI-совместимость; в логике может не использоваться)
-    int baseDemand = 0;              // базовый спрос (параметр моделирования)
-    double curDemand = 0.0;          // текущий спрос (пересчитывается каждый месяц)
-
-    double totalPrice() const { return premiumPerMonth * contractMonths; }
     InsuranceType getType() const { return type_; }
-    void setParams(double newPremiumPerMonth,
-                   int newContractMonths,
-                   double newMaxCoverage,
-                   double newDeductible,
-                   int newOfferValidMonths) {
-        premiumPerMonth = newPremiumPerMonth;
-        contractMonths = newContractMonths;
-        maxCoverage = newMaxCoverage;
-        deductible = newDeductible;
-        offerValidMonths = newOfferValidMonths;
+
+    double getPremiumPerMonth() const { return premiumPerMonth_; }
+    void setPremiumPerMonth(double v) { premiumPerMonth_ = v; }
+
+    int getContractMonths() const { return contractMonths_; }
+    void setContractMonths(int v) { contractMonths_ = v; }
+
+    double getMaxCoverage() const { return maxCoverage_; }
+    void setMaxCoverage(double v) { maxCoverage_ = v; }
+
+    double getDeductible() const { return deductible_; }
+    void setDeductible(double v) { deductible_ = v; }
+
+    int getOfferValidMonths() const { return offerValidMonths_; }
+    void setOfferValidMonths(int v) { offerValidMonths_ = v; }
+
+    int getBaseDemand() const { return baseDemand_; }
+    void setBaseDemand(int v) { baseDemand_ = v; }
+
+    double getCurDemand() const { return curDemand_; }
+    void setCurDemand(double v) { curDemand_ = v; }
+
+    double totalPrice() const {
+        return getPremiumPerMonth() * static_cast<double>(getContractMonths());
     }
 
 private:
     InsuranceType type_ = InsuranceType::Home;
     friend class Simulation;
+
+    double premiumPerMonth_ = 100.0;   // у.е. / месяц
+    int contractMonths_ = 12;         // длительность договора
+    double maxCoverage_ = 200.0;    // макс. возмещение
+    double deductible_ = 100.0;       // франшиза
+    int offerValidMonths_ = 12;        // сколько месяцев действуют условия
+    int baseDemand_ = 0;              // базовый спрос
+    double curDemand_ = 0.0;          // текущий спрос
 };
 
 struct Contract {
     Offer offerSnapshot{};
     int startMonth = 0;
     int endMonth = 0;
-    bool ensuredEvents = false; // страховой случай в текущем месяце (True/False)
 
     bool isActive(int month) const { return month >= startMonth && month <= endMonth; }
     InsuranceType type() const { return offerSnapshot.getType(); }
@@ -58,13 +70,13 @@ struct Contract {
 struct Config {
     int M = 12;
     double initialCapital = 30000.0;
-    double taxRate = 0.09;
+    double taxRate = 0.1;
 
-    std::array<int, 3> baseDemand{50, 40, 45};
+    std::array<int, 3> baseDemand{50, 50, 50};
     int demandNoiseMax = 10;         // случайная добавка к спросу (0..max), см. условие
 
-    int minClaimsPerMonth = 1;
-    int maxClaimsPerMonth = 25;
+    int minClaimsPerMonth = 10;
+    int maxClaimsPerMonth = 250;
 
     unsigned seed = 0;
 };
@@ -104,6 +116,10 @@ public:
 
     bool step(MonthResult* out); // один месяц: налог -> продажи -> выплаты
     double computeDemand(const Offer& o) const;
+    std::array<int, 3> activeContractsByType(int month) const;
+
+    bool needsOfferUpdate() const;
+    std::array<bool, 3> expiredOffers() const;
 
 private:
     int idx(InsuranceType t) const { return static_cast<int>(t); }

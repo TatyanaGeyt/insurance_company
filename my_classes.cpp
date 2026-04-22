@@ -5,15 +5,23 @@
 #include <vector>
 
 Simulation::Simulation(Config cfg) : cfg_(cfg) {
-    offers_[0].setParams(90.0, 12, 20000.0, 800.0, 6);
     offers_[0].type_ = InsuranceType::Home;
-
-    offers_[1].setParams(120.0, 12, 15000.0, 600.0, 6);
     offers_[1].type_ = InsuranceType::Car;
-
-    offers_[2].setParams(150.0, 12, 25000.0, 1000.0, 6);
     offers_[2].type_ = InsuranceType::Health;
     reset();
+}
+
+bool Simulation::needsOfferUpdate() const {
+    const auto e = expiredOffers();
+    return e[0] || e[1] || e[2];
+}
+
+std::array<bool, 3> Simulation::expiredOffers() const {
+    std::array<bool, 3> e{};
+    for (int i = 0; i < 3; ++i) {
+        e[static_cast<size_t>(i)] = (offers_[static_cast<size_t>(i)].getOfferValidMonths() <= 0);
+    }
+    return e;
 }
 
 void Simulation::setConfig(const Config& c) {
@@ -58,8 +66,8 @@ void Simulation::reset() {
     for (auto& v : offerArchiveContractsSold_) v.clear();
 
     for (int i = 0; i < 3; ++i) {
-        offers_[static_cast<size_t>(i)].baseDemand = cfg_.baseDemand[static_cast<size_t>(i)];
-        offers_[static_cast<size_t>(i)].curDemand = 0.0;
+        offers_[static_cast<size_t>(i)].setBaseDemand(cfg_.baseDemand[static_cast<size_t>(i)]);
+        offers_[static_cast<size_t>(i)].setCurDemand(0.0);
         offerArchive_[static_cast<size_t>(i)].push_back(offers_[static_cast<size_t>(i)]);
         offerArchiveContractsSold_[static_cast<size_t>(i)].push_back(0);
     }
@@ -77,19 +85,29 @@ int Simulation::irand(int lo, int hi) {
 }
 
 double Simulation::computeDemand(const Offer& o) const {
-    const int i = idx(o.getType());
-    (void)i;
-    const int base = std::max(0, o.baseDemand);
+    const int base = std::max(0, o.getBaseDemand());
     const double price = std::max(o.totalPrice(), 0.0);
-    const double cov = std::max(o.maxCoverage, 1e-9);
+    const double cov = std::max(o.getMaxCoverage(), 1e-9);
     const double ratio = price / cov;
     const double mult = 1.0 / std::max(ratio, 1e-6);
-    const double capped = std::min(mult, 5.0);
-    return static_cast<double>(base) * capped;
+    // const double capped = std::min(mult, 5.0);
+    // return static_cast<double>(base) * capped; // жёсткий потолок на спрос
+    return static_cast<double>(base) * mult;
+}
+
+std::array<int, 3> Simulation::activeContractsByType(int month) const {
+    std::array<int, 3> out{};
+    for (const auto& c : contracts_) {
+        if (!c.isActive(month)) continue;
+        const int ti = idx(c.type());
+        if (ti >= 0 && ti < 3) out[static_cast<size_t>(ti)] += 1;
+    }
+    return out;
 }
 
 bool Simulation::step(MonthResult* out) {
     if (bankrupt_ || finished_) return false;
+    if (needsOfferUpdate()) return false; // нельзя идти дальше, пока не обновлены истёкшие предложения
     if (month_ >= cfg_.M) {
         finished_ = true;
         return false;
@@ -106,23 +124,25 @@ bool Simulation::step(MonthResult* out) {
                                     [&](const Contract& c) { return !c.isActive(r.month); }),
                      contracts_.end());
 
-    for (auto& c : contracts_) c.ensuredEvents = false;
-
     for (int i = 0; i < 3; ++i) {
+        const size_t typeIdx = static_cast<size_t>(i);
         Offer& o = offers_[static_cast<size_t>(i)];
-        o.baseDemand = cfg_.baseDemand[static_cast<size_t>(i)];
-        o.curDemand = computeDemand(o);
-        r.effectiveDemand[i] = o.curDemand;
+        o.setBaseDemand(cfg_.baseDemand[static_cast<size_t>(i)]);
+        o.setCurDemand(computeDemand(o));
+        r.effectiveDemand[i] = o.getCurDemand();
+
+        if (o.getOfferValidMonths() <= 0) {
+            r.sold[i] = 0;
+            r.revenue[i] = 0.0;
+            continue;
+        }
 
         const int noise = cfg_.demandNoiseMax > 0 ? irand(0, cfg_.demandNoiseMax) : 0;
-        const int sold = std::max(0, static_cast<int>(std::lround(o.curDemand)) + noise);
+        const int sold = std::max(0, static_cast<int>(std::lround(o.getCurDemand())) + noise);
         r.sold[i] = sold;
-
-        r.revenue[i] = static_cast<double>(sold) * o.totalPrice();
-        capital_ += r.revenue[i];
+        r.revenue[i] = 0.0;
 
         if (sold > 0) {
-            const size_t typeIdx = static_cast<size_t>(i);
             if (!offerArchiveContractsSold_[typeIdx].empty()) {
                 offerArchiveContractsSold_[typeIdx].back() += sold;
             }
@@ -130,10 +150,19 @@ bool Simulation::step(MonthResult* out) {
             Contract c;
             c.offerSnapshot = o;
             c.startMonth = r.month;
-            c.endMonth = r.month + std::max(1, o.contractMonths) - 1;
+            c.endMonth = r.month + std::max(1, o.getContractMonths()) - 1;
             for (int k = 0; k < sold; ++k) contracts_.push_back(c);
         }
     }
+
+    for (const auto& c : contracts_) {
+        if (!c.isActive(r.month)) continue;
+        const int ti = idx(c.type());
+        if (ti < 0 || ti >= 3) continue;
+        const double prem = std::max(0.0, c.offerSnapshot.getPremiumPerMonth());
+        r.revenue[static_cast<size_t>(ti)] += prem;
+    }
+    capital_ += (r.revenue[0] + r.revenue[1] + r.revenue[2]);
 
     r.totalClaims = 0.0;
     for (int i = 0; i < 3; ++i) {
@@ -145,9 +174,11 @@ bool Simulation::step(MonthResult* out) {
         }
 
         const int maxPossible = static_cast<int>(active.size());
-        int n = 0;
+        int n = 0, curMaxInsEvents=0, curMinInsEvents=0;
         if (maxPossible > 0) {
-            n = irand(cfg_.minClaimsPerMonth, cfg_.maxClaimsPerMonth);
+            curMinInsEvents = std::min(cfg_.minClaimsPerMonth, maxPossible);
+            curMaxInsEvents = std::min(cfg_.maxClaimsPerMonth, maxPossible);
+            n = irand(curMinInsEvents, curMaxInsEvents);
             n = std::min(n, maxPossible);
         }
         r.claimsCount[i] = n;
@@ -157,17 +188,15 @@ bool Simulation::step(MonthResult* out) {
             const int pick = irand(0, static_cast<int>(active.size()) - 1);
             Contract* c = active[static_cast<size_t>(pick)];
             const Offer& o = c->offerSnapshot;
-            c->ensuredEvents = true;
             active.erase(active.begin() + pick);
 
             double u = urand01();
             if (u <= 0.0) u = 1e-12;
-            const double damage = o.maxCoverage * u;
+            const double damage = o.getMaxCoverage() * u;
             
             // Проверка: страховая выплата начинается только если ущерб >= франшизы
-            if (damage >= o.deductible) {
-                const double pay = damage - o.deductible;
-                paid += std::min(pay, o.maxCoverage);
+            if (damage >= o.getDeductible()) {
+                paid += std::min(damage, o.getMaxCoverage());
             }
         }
 
@@ -177,7 +206,8 @@ bool Simulation::step(MonthResult* out) {
 
     if (capital_ + 1e-9 < r.totalClaims) {
         bankrupt_ = true;
-        r.capitalAfter = capital_;
+        r.capitalAfter = capital_ - r.totalClaims;
+        capital_ = r.capitalAfter;
         month_ = r.month;
         if (out) *out = r;
         return false;
@@ -188,6 +218,14 @@ bool Simulation::step(MonthResult* out) {
 
     month_ = r.month;
     if (month_ >= cfg_.M) finished_ = true;
+
+    for (int i = 0; i < 3; ++i) {
+        const size_t typeIdx = static_cast<size_t>(i);
+        const int cur = offers_[typeIdx].getOfferValidMonths();
+        if (cur <= 0) continue;
+        const int left = cur - 1;
+        offers_[typeIdx].setOfferValidMonths(std::max(0, left));
+    }
 
     if (out) *out = r;
     return true;
